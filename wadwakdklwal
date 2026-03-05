@@ -1,0 +1,1749 @@
+local Fatality = loadstring(game:HttpGet("https://raw.githubusercontent.com/4lpaca-pin/Fatality/refs/heads/main/src/source.luau"))();
+
+Fatality:Loader({ Name = "AV0X", Duration = 2 });
+
+local repo = 'https://raw.githubusercontent.com/violin-suzutsuki/LinoriaLib/main/'
+local Library    = loadstring(game:HttpGet(repo .. 'Library.lua'))()
+local ThemeManager = loadstring(game:HttpGet(repo .. 'addons/ThemeManager.lua'))()
+local SaveManager  = loadstring(game:HttpGet(repo .. 'addons/SaveManager.lua'))()
+
+local Window = Library:CreateWindow({ Title = 'AV∅X', Center = true, AutoShow = true, TabPadding = 10, MenuFadeTime = 0.25 })
+
+local Tabs = {
+    COMBAT         = Window:AddTab('COMBAT'),
+    VISUAL         = Window:AddTab('VISUAL'),
+    PLAYER         = Window:AddTab('PLAYER'),
+    ['UI Settings']= Window:AddTab('SETTINGS'),
+}
+
+local Players       = game:GetService("Players")
+local RunService    = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Debris        = game:GetService("Debris")
+local SoundService  = game:GetService("SoundService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Stats         = game:GetService("Stats")
+
+local me     = Players.LocalPlayer
+local cam    = workspace.CurrentCamera  
+
+local function IsTeam(model)
+    if not model then return false end
+    local h = model:FindFirstChild("Head")
+    return h and h:FindFirstChild("Dot") and h.Dot.Enabled == true or false
+end
+
+----AIMCHCK
+local Aimbot = Tabs.COMBAT:AddLeftGroupbox('AIMBOT')
+
+local AB = {
+    enabled      = false, prediction  = false,
+    fovEnabled   = false, sleeperCheck= false,
+    aiCheck      = false, teamCheck   = false,
+    fovSize      = 150,   fovColor    = Color3.fromRGB(61,180,136),
+    smoothness   = 1,     aimRadius   = 1000,
+    predUpBase   = 0.5,   predSmooth  = 1.5,
+    
+    locked = nil, predX = 0, predY = 0,
+    weapon = {side=0, up=0}, hasWeapon = false,
+    players = {},
+}
+
+local weaponSets = {
+    Bow={side=3.5,up=8.5}, CrossBow={side=3.5,up=8.5},
+    AR15={side=0.5,up=0.025}, M4A1={side=0.75,up=2.0},
+    SCAR={side=0.75,up=1.8}, SVD={side=0.5,up=0.025},
+    C9={side=1.0,up=2.0}, UZI={side=1.0,up=2.0},
+    USP9={side=1.0,up=2.0}, Blunderbuss={side=1.0,up=0},
+    PumpShotgun={side=1.0,up=0}, EnergyRifle={side=0.35,up=0.025},
+    GaussRifle={side=0.5,up=0.1}, HMAR={side=1.0,up=2.0},
+    LeverActionRifle={side=0.5,up=0.025}, PipePistol={side=2.0,up=2.0},
+    PipeSMG={side=2.0,up=2.0}, RPG={side=2.5,up=1.0},
+}
+
+local partSets = {
+    Bow={"Arrow","Fabric","Meshes/Bow"},
+    CrossBow={"Arrow","BackMetal","Body","FrontNails","Release","SpringSteel","String","Wheel","Slide"},
+    AR15={"AnimSaves","Barrel","Body","Bolt","ChargingHandle","Decor","Grip","Mag","Rails","Stock","Muzzle"},
+    M4A1={"DefaultSight","Body","Bolt","ChargeHandle","Grip","Mag","Metal","mbrk","Muzzle"},
+    SCAR={"DefaultSight","Barrel","Body","ChargingHandle","Decals","Mag","Rails","ShoulderPad","Stock"},
+    SVD={"DefaultSight","Body","Bolt","Magazine","Magazine2","Metal2","Wood"},
+    C9={"Barrel","Body","Bolt","Decor","Grip","LowerSlide","Mag","Sight1","Sight2","UpperSlide","Muzzle"},
+    UZI={"DefaultSight","Body","Body2","Bolt","ChargingHandle","Decor","Grip","Mag","Stock","Muzzle"},
+    USP9={"Body","Mag","Slide","Muzzle"},
+    Blunderbuss={"Body","Tube","thing","Muzzle"},
+    PumpShotgun={"Barrel","Body","MainMetal","RearSight","Shell","Slider","Muzzle"},
+    EnergyRifle={"DefaultSight","FrontCover","Glowing","Grip","Mag","Metal","Metal2","RearCover","RearDecor","Screws","Tubes"},
+    GaussRifle={"DefaultSight","Barrel","Body","CoilHolders","Coils","Decals1","Decals2","Grip","Housing","Mag","StockBack"},
+    HMAR={"DefaultSight","Body","Bolt","Bolts","Cover","Mag","Rails","Spring","Stock","Wood","Muzzle"},
+    LeverActionRifle={"9mm","DefaultSight","Body","Brass","Hammer","Lever","Metal","Thing","Wood","Muzzle"},
+    PipePistol={"DefaultSight","Body","Bolt","Mag","Muzzle"},
+    PipeSMG={"DefaultSight","Barrel","Body","Bolt","Flap","Grip","Mag","Stock","Muzzle"},
+    RPG={"RocketModel","Body","Body2","Caps","Fasteners","FireMech","Safety","Sight","Trigger","Muzzle"},
+}
+
+local fovCircle = Drawing.new("Circle")
+fovCircle.Thickness=1; fovCircle.NumSides=64; fovCircle.Radius=AB.fovSize
+fovCircle.Filled=false; fovCircle.Visible=false; fovCircle.Transparency=1
+fovCircle.Color=AB.fovColor; fovCircle.ZIndex=999
+
+local function updateFovPos()
+    local s = cam.ViewportSize
+    fovCircle.Position = Vector2.new(s.X/2, s.Y/2)
+end
+updateFovPos()
+cam:GetPropertyChangedSignal("ViewportSize"):Connect(updateFovPos)
+
+local sleepCacheAB  = setmetatable({}, {__mode="k"})
+local playerCacheAB = setmetatable({}, {__mode="k"})
+local lastPosAB     = setmetatable({}, {__mode="k"})
+
+local function isSleeper_AB(m)
+    if not m then return false end
+    local c = sleepCacheAB[m]
+    if c and tick()-c.time < 0.5 then return c.value end
+    local lt = m:FindFirstChild("LowerTorso")
+    local v = lt and lt:FindFirstChild("RootRig") and
+              type(lt.RootRig.CurrentAngle)=="number" and lt.RootRig.CurrentAngle~=0 or false
+    sleepCacheAB[m] = {value=v, time=tick()}
+    return v
+end
+
+local function isPlayer_AB(m)
+    local c = playerCacheAB[m]
+    if c and tick()-c.time < 1 then return c.value end
+    local t = m:FindFirstChild("Torso")
+    local v = t and t:FindFirstChild("LeftBooster") and true or false
+    playerCacheAB[m] = {value=v, time=tick()}
+    return v
+end
+
+local function getPath(root, p)
+    local cur = root
+    for n in p:gmatch("[^/]+") do
+        cur = cur:FindFirstChild(n)
+        if not cur then return nil end
+    end
+    return cur
+end
+
+local function getWeapon()
+    local r = workspace
+    for _,n in ipairs({"Const","Ignore","FPSArms"}) do
+        r = r:FindFirstChild(n)
+        if not r then AB.hasWeapon=false; return nil end
+    end
+    local hand = r:FindFirstChild("HandModel")
+    if not hand then AB.hasWeapon=false; return nil end
+    for w,parts in pairs(partSets) do
+        local found = 0
+        for _,p in ipairs(parts) do
+            local part = p:find("/") and getPath(hand,p) or hand:FindFirstChild(p,true)
+            if part then found=found+1 end
+        end
+        if found >= #parts*0.6 then
+            AB.hasWeapon=true
+            local ws = weaponSets[w]
+            if ws then AB.weapon.side=ws.side; AB.weapon.up=ws.up end
+            return w
+        end
+    end
+    AB.hasWeapon=false; AB.weapon.side=0; AB.weapon.up=0
+    return nil
+end
+
+task.spawn(function() while true do task.wait(0.2); getWeapon() end end)
+
+local function getPart(m)
+    return m and (m:FindFirstChild("Head") or m:FindFirstChild("UpperTorso") or
+                  m:FindFirstChild("LowerTorso") or m:FindFirstChild("HumanoidRootPart"))
+end
+
+local function getVel(m)
+    if not m then return Vector3.new() end
+    local p = getPart(m); if not p then return Vector3.new() end
+    local t = tick()
+    local last = lastPosAB[m]
+    if not last then lastPosAB[m]={pos=p.Position,time=t}; return Vector3.new() end
+    local dt = t-last.time; if dt<=0 then return Vector3.new() end
+    local vel = (p.Position-last.pos)/dt
+    lastPosAB[m]={pos=p.Position,time=t}
+    return vel
+end
+
+local function addABPlayer(o)
+    if o:IsA("Model") and o.Name~=me.Name then
+        if o:FindFirstChild("HumanoidRootPart") or o:FindFirstChild("LowerTorso") then
+            table.insert(AB.players, o)
+        end
+    end
+end
+for _,v in pairs(workspace:GetChildren()) do addABPlayer(v) end
+workspace.ChildAdded:Connect(addABPlayer)
+workspace.ChildRemoved:Connect(function(o)
+    for i=#AB.players,1,-1 do
+        if AB.players[i]==o then
+            table.remove(AB.players,i)
+            lastPosAB[o]=nil; sleepCacheAB[o]=nil; playerCacheAB[o]=nil; break
+        end
+    end
+end)
+
+-----------
+Aimbot:AddToggle("Enable",{Text="Enable Aimbot",Default=false,Tooltip="Hold MB2 to aim",
+    Callback=function(v) AB.enabled=v; if not v then fovCircle.Visible=false end end})
+Aimbot:AddToggle("Prediction",{Text="Enable Prediction",Default=false,Callback=function(v) AB.prediction=v end})
+Aimbot:AddToggle("SleeperCheck",{Text="Sleeper Check",Default=false,Callback=function(v) AB.sleeperCheck=v end})
+Aimbot:AddToggle("AICheck",{Text="AI Check",Default=false,Callback=function(v) AB.aiCheck=v end})
+Aimbot:AddToggle("TeamCheck",{Text="Team Check",Default=false,Callback=function(v) AB.teamCheck=v end})
+
+local fovToggle = Aimbot:AddToggle("FovEnable",{Text="Show FOV Circle",Default=false,
+    Callback=function(v) AB.fovEnabled=v; fovCircle.Visible=v and AB.enabled end})
+fovToggle:AddColorPicker("FovColor",{Title="FOV Color",Default=Color3.fromRGB(61,180,136),
+    Callback=function(v) AB.fovColor=v; fovCircle.Color=v end})
+Aimbot:AddSlider("FovSize",{Text="FOV Size",Default=150,Min=50,Max=300,Rounding=0,
+    Callback=function(v) AB.fovSize=v; fovCircle.Radius=v end})
+Aimbot:AddSlider("AimRadius",{Text="Aimbot Radius",Default=1000,Min=300,Max=1000,Rounding=0,
+    Callback=function(v) AB.aimRadius=v end})
+
+RunService.RenderStepped:Connect(function(dt)
+    if not AB.enabled then
+        AB.locked=nil; fovCircle.Visible=false; AB.predX=0; AB.predY=0; return
+    end
+    fovCircle.Visible=AB.fovEnabled
+
+    local target,targetScore = nil, math.huge
+    local camPos = cam.CFrame.Position
+    local tDist,tVel,tPart = 0, Vector3.new(), nil
+    local center = Vector2.new(cam.ViewportSize.X/2, cam.ViewportSize.Y/2)
+
+    if AB.locked and AB.locked.Parent then
+        local p = getPart(AB.locked)
+        if p then
+            tDist=(camPos-p.Position).Magnitude; tVel=getVel(AB.locked)
+            local sp,on = cam:WorldToViewportPoint(p.Position)
+            if on and (Vector2.new(sp.X,sp.Y)-center).Magnitude < AB.fovSize*1.5 then
+                target=sp; tPart=p
+            else AB.locked=nil end
+        else AB.locked=nil end
+    end
+
+    if not AB.locked then
+        for _,p in ipairs(AB.players) do
+            local part = getPart(p)
+            if part then
+                if (AB.sleeperCheck and isSleeper_AB(p)) or
+                   (AB.aiCheck and not isPlayer_AB(p)) or
+                   (AB.teamCheck and IsTeam(p)) then continue end
+                local dist = (camPos-part.Position).Magnitude
+                if dist<=AB.aimRadius then
+                    local sp,on = cam:WorldToViewportPoint(part.Position)
+                    if on then
+                        local d2c = (Vector2.new(sp.X,sp.Y)-center).Magnitude
+                        if d2c<AB.fovSize then
+                            local w = d2c*(1+dist/500)
+                            if w<targetScore then
+                                targetScore=w; target=sp; tDist=dist
+                                tVel=getVel(p); tPart=part; AB.locked=p
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if not target then AB.locked=nil; AB.predX=0; AB.predY=0 end
+
+    if target and UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
+        local dx=(target.X-center.X)/AB.smoothness
+        local dy=(target.Y-center.Y)/AB.smoothness
+        if AB.prediction and AB.hasWeapon and tPart then
+            local vm=tVel.Magnitude
+            local upOff = AB.weapon.up>0 and (tDist/12)*AB.weapon.up*AB.predUpBase or 0
+            local sox,soy = 0,0
+            if vm>0.1 then
+                local sm=math.min(vm/2,1)
+                local mf=(tDist/20)*AB.weapon.side*0.6*sm
+                local pp,ons = cam:WorldToViewportPoint(tPart.Position+tVel.Unit*mf)
+                if ons then sox=pp.X-target.X; soy=pp.Y-target.Y end
+            end
+            local sf=math.min(dt*AB.predSmooth, 0.5)
+            AB.predX=AB.predX+(sox-AB.predX)*sf
+            AB.predY=AB.predY+((soy-upOff)-AB.predY)*sf
+            mousemoverel(dx+AB.predX, dy+AB.predY)
+        else
+            AB.predX=0; AB.predY=0
+            mousemoverel(dx, dy)
+        end
+    else
+        AB.predX=0; AB.predY=0
+    end
+end)
+
+--HB
+
+local hitboxEnabled = false
+local hitboxSizeX, hitboxSizeY = 4, 4
+local hitboxTransparency = 0.75
+local hitboxColor = Color3.fromRGB(61, 180, 136) 
+local sleepCheck = false
+local aiCheck = false
+local teamCheck = false
+local hitboxTarget = "Head"
+local mixSpeed = 1
+local canCollideEnabled = false
+local originalProperties = {}
+local activeMixThreads = {}
+
+local function IsTeam(player)
+    if not player then return false end
+    local head = player:FindFirstChild("Head")
+    if head and head:FindFirstChild("Dot") and head.Dot.Enabled == true then return true end
+    return false
+end
+
+local function is_sleeping(model)
+    if not model then return false end
+    if model:GetAttribute("Sleeping") == true or model:GetAttribute("IsSleeping") == true or model:GetAttribute("Asleep") == true or model:GetAttribute("Sleep") == true then return true end
+    local lower = model:FindFirstChild("LowerTorso")
+    if lower then
+        local rootrig = lower:FindFirstChild("RootRig")
+        if rootrig and typeof(rootrig.CurrentAngle) == "number" and rootrig.CurrentAngle ~= 0 then return true end
+    end
+    local function get_sleep_flag(m, name)
+        local v = m:FindFirstChild(name, true)
+        if v and v.ClassName == "BoolValue" then return v.Value end
+        return false
+    end
+    if get_sleep_flag(model, "Sleeping") or get_sleep_flag(model, "IsSleeping") or get_sleep_flag(model, "Asleep") or get_sleep_flag(model, "Sleep") then return true end
+    local rootPart = model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("RootPart") or model:FindFirstChild("Torso")
+    if rootPart then
+        if rootPart.Velocity.Magnitude < 0.1 then
+            if rootPart:GetAttribute("Sleeping") == true or rootPart:GetAttribute("IsSleeping") == true then return true end
+        end
+    end
+    local animator = model:FindFirstChild("Animator") or model:FindFirstChildOfClass("Animator")
+    if animator and animator:FindFirstChild("Sleep") then return true end
+    local parent = model.Parent
+    if parent and parent.GetAttribute then
+        if parent:GetAttribute("Sleeping") == true or parent:GetAttribute("IsSleeping") == true or parent:GetAttribute("Asleep") == true or parent:GetAttribute("Sleep") == true then return true end
+    end
+    for _, inst in pairs(model:GetDescendants()) do
+        local name = inst.Name and inst.Name:lower() or ""
+        if name:find("sleep") then
+            if inst.ClassName == "BoolValue" and inst.Value == true then return true end
+            if inst.ClassName == "StringValue" and tostring(inst.Value):lower():find("sleep") then return true end
+            if inst.GetAttribute then
+                if inst:GetAttribute("Sleeping") == true or inst:GetAttribute("IsSleeping") == true or inst:GetAttribute("Asleep") == true or inst:GetAttribute("Sleep") == true then return true end
+            end
+        end
+    end
+    return false
+end
+
+-- Сохраняем оригинал
+local function savePart(part)
+    if not originalProperties[part] then
+        originalProperties[part] = {
+            Size = part.Size,
+            Transparency = part.Transparency,
+            Color = part.Color,
+            Material = part.Material,
+            CanCollide = part.CanCollide
+        }
+    end
+end
+
+-- Восстанавливаем оригинал
+local function restorePart(part)
+    if not part then return end
+    local o = originalProperties[part]
+    if o then
+        part.Size = o.Size
+        part.Transparency = o.Transparency
+        part.Color = o.Color
+        part.Material = o.Material
+        part.CanCollide = o.CanCollide
+    end
+end
+
+-- Применяем хитбокс к части
+local function applyHitboxToPart(part)
+    if not part or not part:IsA("BasePart") then return end
+    savePart(part)
+    
+    part.Size = Vector3.new(hitboxSizeY, hitboxSizeX, hitboxSizeY)
+    part.Transparency = hitboxTransparency
+    part.Color = hitboxColor
+    
+    if canCollideEnabled then
+        part.CanCollide = false
+    else
+        part.CanCollide = originalProperties[part].CanCollide
+    end
+end
+
+-- Проверка нужно ли пропустить модель
+local function shouldSkipModel(model, head, torso)
+    if not model then return true end
+    if aiCheck and torso and torso.CollisionGroup == "NPC" then return true end
+    if sleepCheck and is_sleeping(model) then return true end
+    if teamCheck and IsTeam(model) then return true end
+    return false
+end
+
+-- Останавливаем Mix поток для модели
+local function stopMixThread(model)
+    if activeMixThreads[model] then
+        activeMixThreads[model] = false
+        activeMixThreads[model] = nil
+    end
+end
+
+-- Применяем хитбокс к модели
+local function applyHitboxToModel(model)
+    local head = model:FindFirstChild("Head")
+    local torso = model:FindFirstChild("Torso") or model:FindFirstChild("HumanoidRootPart")
+    
+    if not head and not torso then return end
+    
+    stopMixThread(model)
+    
+    -- Если хитбокс выключен или модель нужно пропустить - восстанавливаем
+    if shouldSkipModel(model, head, torso) or not hitboxEnabled then
+        if head then restorePart(head) end
+        if torso then restorePart(torso) end
+        return
+    end
+    
+    -- Обычные режимы
+    if hitboxTarget == "Head" then
+        if head then 
+            applyHitboxToPart(head)
+            if torso then restorePart(torso) end
+        end
+        return
+    elseif hitboxTarget == "Torso" then
+        if torso then 
+            applyHitboxToPart(torso)
+            if head then restorePart(head) end
+        end
+        return
+    end
+    
+    -- MIX режим - исправленная версия с правильными задержками
+    if hitboxTarget == "Mix" and (head or torso) then
+        activeMixThreads[model] = true
+        
+        task.spawn(function()
+            -- Сначала активируем голову
+            if head then 
+                applyHitboxToPart(head)
+            end
+            if torso then 
+                restorePart(torso)
+            end
+            
+            -- Цикл переключений
+            while activeMixThreads[model] and hitboxEnabled and hitboxTarget == "Mix" do
+                -- Проверка перед циклом
+                if shouldSkipModel(model, head, torso) then
+                    break
+                end
+                
+                -- Ждем mixSpeed секунд (голова активна)
+                local start = os.clock()
+                while os.clock() - start < mixSpeed and 
+                      activeMixThreads[model] and 
+                      hitboxEnabled and 
+                      hitboxTarget == "Mix" do
+                    task.wait()
+                    -- Проверяем не нужно ли выйти
+                    if shouldSkipModel(model, head, torso) then
+                        break
+                    end
+                end
+                
+                if not activeMixThreads[model] or not hitboxEnabled or hitboxTarget ~= "Mix" then
+                    break
+                end
+                
+                if shouldSkipModel(model, head, torso) then
+                    break
+                end
+                
+                -- Переключаем на торс
+                if torso then 
+                    applyHitboxToPart(torso)
+                end
+                if head then 
+                    restorePart(head)
+                end
+                
+                -- Ждем mixSpeed секунд (торс активен)
+                start = os.clock()
+                while os.clock() - start < mixSpeed and 
+                      activeMixThreads[model] and 
+                      hitboxEnabled and 
+                      hitboxTarget == "Mix" do
+                    task.wait()
+                    -- Проверяем не нужно ли выйти
+                    if shouldSkipModel(model, head, torso) then
+                        break
+                    end
+                end
+                
+                if not activeMixThreads[model] or not hitboxEnabled or hitboxTarget ~= "Mix" then
+                    break
+                end
+                
+                if shouldSkipModel(model, head, torso) then
+                    break
+                end
+                
+                -- Переключаем обратно на голову
+                if head then 
+                    applyHitboxToPart(head)
+                end
+                if torso then 
+                    restorePart(torso)
+                end
+            end
+            
+            -- Восстанавливаем все при выходе
+            if head then restorePart(head) end
+            if torso then restorePart(torso) end
+            activeMixThreads[model] = nil
+        end)
+    end
+end
+
+-- Обновляем все модели
+local function updateAllModels()
+    for _, model in pairs(workspace:GetChildren()) do
+        if model:IsA("Model") then
+            task.spawn(function()
+                applyHitboxToModel(model)
+            end)
+        end
+    end
+end
+
+-- Периодическое обновление
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        if hitboxEnabled then
+            updateAllModels()
+        end
+    end
+end)
+
+-- GUI
+local Hitbox = Tabs.COMBAT:AddRightGroupbox('HITBOX')
+
+Hitbox:AddToggle('EnableHitbox', {Text='Enable Hitbox', Default=false, Callback=function(state)
+    hitboxEnabled = state
+    if not hitboxEnabled then
+        -- Останавливаем все Mix потоки
+        for model in pairs(activeMixThreads) do
+            activeMixThreads[model] = false
+        end
+        activeMixThreads = {}
+        
+        -- Восстанавливаем все части
+        for part, o in pairs(originalProperties) do
+            if part and part.Parent then
+                part.Size = o.Size
+                part.Transparency = o.Transparency
+                part.Color = o.Color
+                part.Material = o.Material
+                part.CanCollide = o.CanCollide
+            end
+        end
+    else
+        updateAllModels()
+    end
+end})
+
+Hitbox:AddToggle('CanCollideToggle', {Text='CanCollide', Default=false, Callback=function(state)
+    canCollideEnabled = state
+    if hitboxEnabled then updateAllModels() end
+end})
+
+Hitbox:AddDropdown('HitboxTarget', {Values={'Head','Torso','Mix'}, Default='Head', Multi=false, Text='Hitbox Target',
+    Callback=function(value) hitboxTarget=value; if hitboxEnabled then updateAllModels() end end})
+
+Hitbox:AddToggle('SleepCheck', {Text='Sleep Check', Default=false,
+    Callback=function(state) sleepCheck=state; if hitboxEnabled then updateAllModels() end end})
+
+Hitbox:AddToggle('AICheck', {Text='AI Check', Default=false,
+    Callback=function(state) aiCheck=state; if hitboxEnabled then updateAllModels() end end})
+
+Hitbox:AddToggle('TeamCheck', {Text='Team Check', Default=false,
+    Callback=function(state) teamCheck=state; if hitboxEnabled then updateAllModels() end end})
+
+Hitbox:AddSlider('MixSpeed', {Text='Mix Speed', Min=0.5, Max=3, Default=1, Rounding=1,
+    Callback=function(value) mixSpeed=value end})
+
+Hitbox:AddLabel("Hitbox Color"):AddColorPicker('HitboxColor', {Default=Color3.fromRGB(61,180,136), Title='Hitbox Color', Transparency=0,
+    Callback=function(color) hitboxColor=color; if hitboxEnabled then updateAllModels() end end})
+
+Hitbox:AddSlider('HitboxSizeX', {Text='Size X', Min=1, Max=7, Default=4, Rounding=1,
+    Callback=function(value) hitboxSizeX=value; if hitboxEnabled then updateAllModels() end end})
+
+Hitbox:AddSlider('HitboxSizeY', {Text='Size Y', Min=1, Max=7, Default=4, Rounding=1,
+    Callback=function(value) hitboxSizeY=value; if hitboxEnabled then updateAllModels() end end})
+
+Hitbox:AddSlider('HitboxTransparency', {Text='Transparency', Min=0, Max=1, Default=0.5, Rounding=2,
+    Callback=function(value) hitboxTransparency=value; if hitboxEnabled then updateAllModels() end end})
+
+-- Обработка новых моделей
+workspace.ChildAdded:Connect(function(child)
+    if not child:IsA("Model") or not hitboxEnabled then return end
+    
+    task.wait(0.1)
+    
+    local head = child:FindFirstChild("Head")
+    local torso = child:FindFirstChild("Torso") or child:FindFirstChild("HumanoidRootPart")
+    
+    if head or torso then
+        task.spawn(function()
+            applyHitboxToModel(child)
+        end)
+    end
+end)
+
+-- Обработка удаления моделей
+workspace.ChildRemoved:Connect(function(child)
+    if child:IsA("Model") then
+        stopMixThread(child)
+    end
+end)
+
+-- Первоначальное применение
+task.spawn(function()
+    task.wait(1)
+    updateAllModels()
+end)
+
+--+-+-+--+-+-+--+-+-+--+-+-+--+-+-+
+
+
+local selectedSound = "NeverLose"
+local hitSoundEnabled = false
+
+local sounds = {
+    NeverLose = { id = "97643101798871", volume = 2 },
+    Rust = { id = "95901676300980", volume = 0.3 },
+    Bat = { id = "134948432971103", volume = 0.7 }
+}
+
+local soundService = game:GetService("SoundService")
+local dink = soundService.Dink
+local headshot = soundService.PlayerHitHeadshot
+
+local originalDinkId = dink.SoundId
+local originalHeadshotId = headshot.SoundId
+local originalDinkVolume = dink.Volume
+local originalHeadshotVolume = headshot.Volume
+
+local function applySounds()
+    if hitSoundEnabled and selectedSound then
+        local soundData = sounds[selectedSound]
+        local soundId = "rbxassetid://" .. soundData.id
+        local volume = soundData.volume
+
+        dink.SoundId = soundId
+        dink.Volume = volume
+        headshot.SoundId = soundId
+        headshot.Volume = volume
+    else
+        dink.SoundId = originalDinkId
+        dink.Volume = originalDinkVolume
+        headshot.SoundId = originalHeadshotId
+        headshot.Volume = originalHeadshotVolume
+    end
+end
+
+Hitbox:AddToggle('HitSound', {
+    Text = 'HitSound',
+    Default = false,
+    Callback = function(state)
+        hitSoundEnabled = state
+        applySounds()
+    end
+})
+
+Hitbox:AddDropdown('SoundSelect', {
+    Text = 'Select Sound',
+    Default = 1,
+    Values = {'NeverLose', 'Rust', 'Bat'},
+    Callback = function(value)
+        selectedSound = value
+        if hitSoundEnabled then
+            applySounds()
+        end
+    end
+})
+
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        if hitSoundEnabled then
+            applySounds()
+        end
+    end
+end)
+
+
+---esp
+local ESP = Tabs.VISUAL:AddLeftGroupbox('ESP')
+
+local ES = {
+    enabled=false, sleeperCheck=false, aiCheck=false, teamCheck=false,
+    renderDistance=1000,
+    box=false, name=false, distance=false, weapon=false, chams=false,
+    boxColor   = Color3.fromRGB(61,180,136),
+    nameColor  = Color3.fromRGB(61,180,136),
+    distColor  = Color3.fromRGB(61,180,136),
+    weapColor  = Color3.fromRGB(61,180,136),
+    chamsColor = Color3.fromRGB(61,180,136),
+}
+
+local boxes         = setmetatable({}, {__mode="k"})
+local weaponCache   = setmetatable({}, {__mode="k"})
+local weaponUpdTime = setmetatable({}, {__mode="k"})
+local chamsObjects  = setmetatable({}, {__mode="k"})
+local plrTypeCache  = setmetatable({}, {__mode="k"})
+local sleepCacheESP = setmetatable({}, {__mode="k"})
+
+local fovTan = math.tan(math.rad(cam.FieldOfView*0.5))
+cam:GetPropertyChangedSignal("FieldOfView"):Connect(function()
+    fovTan = math.tan(math.rad(cam.FieldOfView*0.5))
+end)
+
+local function isPlayer_ESP(m)
+    local c = plrTypeCache[m]
+    if c and tick()-c.time<2 then return c.value end
+    local t = m:FindFirstChild("Torso")
+    local v = t and t:FindFirstChild("LeftBooster") and true or false
+    plrTypeCache[m]={value=v,time=tick()}; return v
+end
+
+local function isSleeper_ESP(m)
+    if not m then return false end
+    local c = sleepCacheESP[m]
+    if c and tick()-c.time<1 then return c.value end
+    local lt = m:FindFirstChild("LowerTorso")
+    local v = false
+    if lt then
+        local rr = lt:FindFirstChild("RootRig")
+        if rr then
+            local ok,a = pcall(function() return rr.CurrentAngle end)
+            v = ok and type(a)=="number" and a~=0 or false
+        end
+    end
+    sleepCacheESP[m]={value=v,time=tick()}; return v
+end
+
+local espWeapons = {
+    Bow={"Arrow","Fabric","Handle","Meshes/Bow","ADS","Mover","AnimationController"},
+    AR15={"AnimSaves","Barrel","Body","Bolt","ChargingHandle","Decor","Grip","Handle","Mag","Rails","Stock","ADS","Muzzle","AnimationController"},
+    Bandage={"Handle","Bandage","AnimationController"},
+    Beans={"Beans","Handle","AnimationController"},
+    BloxyCola={"Bloxy Cola HD","Handle","AnimationController"},
+    Blunderbuss={"Body","Handle","Tube","thing","ADS","Muzzle","AnimationController"},
+    C9={"Barrel","Body","Bolt","Decor","Grip","Handle","LowerSlide","Mag","Sight1","Sight2","UpperSlide","ADS","Muzzle","AnimationController"},
+    CrossBow={"Arrow","BackMetal","Body","FrontNails","Handle","Release","SpringSteel","String","Wheel","ADS","Slide","AnimationController"},
+    EnergyRifle={"DefaultSight","FrontCover","Glowing","Grip","Handle","Mag","Metal","Metal2","RearCover","RearDecor","Screws","Tubes","AnimationController"},
+    FlameThrower={"Barrel","Body","Decor","Grip","Handle","Hoses","LowerTank","Mag","Strap","Tubes","Particle","AnimationController"},
+    GaussRifle={"DefaultSight","Barrel","Body","CoilHolders","Coils","Decals1","Decals2","Grip","Handle","Housing","Mag","StockBack","AnimationController"},
+    HMAR={"DefaultSight","Body","Bolt","Bolts","Cover","Handle","Mag","Rails","Spring","Stock","Wood","Muzzle","AnimationController"},
+    HealingBandage={"Handle","Bandage","AnimationController"},
+    LeverActionRifle={"9mm","DefaultSight","Body","Brass","Hammer","Handle","Lever","Metal","Thing","Wood","Muzzle","AnimationController"},
+    M4A1={"DefaultSight","Body","Bolt","ChargeHandle","Grip","Handle","Mag","Metal","mbrk","Muzzle","AnimationController"},
+    MedSerum={"Body","Cross","Handle","Injector","Plunger","Spring","AnimationController"},
+    MiningDrill={"Bearings","Body","DrillBit","Handle","Inlets","Tubes","VisualHandle","AnimationController"},
+    PipePistol={"DefaultSight","Body","Bolt","Handle","Mag","Muzzle","AnimationController","Animator"},
+    PipeSMG={"DefaultSight","Barrel","Body","Bolt","Flap","Grip","Handle","Mag","Stock","Muzzle","AnimationController"},
+    PumpShotgun={"Barrel","Body","Handle","MainMetal","RearSight","Shell","Slider","ADS","Muzzle","AnimationController"},
+    RPG={"RocketModel","Body","Body2","Caps","Fasteners","FireMech","Handle","Safety","Sight","Trigger","ADS","Muzzle","AnimationController"},
+    SCAR={"DefaultSight","Barrel","Body","ChargingHandle","Decals","Handle","Mag","Rails","ShoulderPad","Stock","Muzzle","AnimationController"},
+    SVD={"DefaultSight","Body","Bolt","Handle","Magazine","Magazine2","Metal2","Wood","AnimationController"},
+    USP9={"Body","Handle","Mag","Slide","ADS","Muzzle","AnimationController"},
+    UZI={"DefaultSight","Body","Body2","Bolt","ChargingHandle","Decor","Grip","Handle","Mag","Stock","Muzzle","AnimationController"},
+}
+
+local function detectWeapon(model)
+    local t = tick()
+    local lu = weaponUpdTime[model]
+    if lu and t-lu<2 then return weaponCache[model] or "None" end
+    local hand = model:FindFirstChild("HandModel")
+    if not hand then
+        weaponCache[model]="None"; weaponUpdTime[model]=t; return "None"
+    end
+    local best,bestN = "None", 0
+    for wn,parts in pairs(espWeapons) do
+        local cnt=0
+        for _,p in ipairs(parts) do
+            if hand:FindFirstChild(p,true) then cnt=cnt+1 end
+        end
+        if cnt>bestN then best=wn; bestN=cnt end
+    end
+    weaponCache[model]=best; weaponUpdTime[model]=t
+    return best
+end
+
+local function resetWeaponCache(m) weaponCache[m]=nil; weaponUpdTime[m]=nil end
+
+local function updateChams(model, enabled, color)
+    if not ES.chams or not enabled then
+        if chamsObjects[model] then chamsObjects[model].Enabled=false end; return
+    end
+    if not chamsObjects[model] or not chamsObjects[model].Parent then
+        if chamsObjects[model] then pcall(function() chamsObjects[model]:Destroy() end) end
+        local hl = Instance.new("Highlight")
+        hl.FillTransparency=0.25; hl.OutlineTransparency=1
+        hl.DepthMode=Enum.HighlightDepthMode.AlwaysOnTop
+        hl.FillColor=color; hl.Parent=model
+        chamsObjects[model]=hl
+    else
+        chamsObjects[model].FillColor=color; chamsObjects[model].Enabled=true
+    end
+end
+
+local function hideESP(d)
+    d.box.Visible=false; d.nameText.Visible=false; d.weaponText.Visible=false; d.distanceText.Visible=false
+end
+
+local function createESP(model)
+    if boxes[model] then return end
+    local d = {
+        box         = Drawing.new("Square"),
+        nameText    = Drawing.new("Text"),
+        weaponText  = Drawing.new("Text"),
+        distanceText= Drawing.new("Text"),
+    }
+    d.box.Visible=false; d.box.Filled=false; d.box.Thickness=1
+    for _,tx in ipairs({d.nameText,d.weaponText,d.distanceText}) do
+        tx.Visible=false; tx.Size=11; tx.Center=true; tx.Font=3; tx.Outline=true
+    end
+
+    local cachedIsPlayer  = isPlayer_ESP(model)
+    local cachedIsSleeper = isSleeper_ESP(model)
+    local lastCacheTime   = tick()
+
+    boxes[model]={
+        box=d.box, nameText=d.nameText, weaponText=d.weaponText, distanceText=d.distanceText,
+        cachedIsPlayer=cachedIsPlayer, cachedIsSleeper=cachedIsSleeper, lastCacheTime=lastCacheTime
+    }
+end
+
+RunService.RenderStepped:Connect(function(dt)
+    local t = tick()
+    local camPos = cam.CFrame.Position
+    for model, d in pairs(boxes) do
+        if not model or not model.Parent then
+            hideESP(d); continue
+        end
+        if not ES.enabled then
+            hideESP(d)
+            if ES.chams then updateChams(model,false) end
+            continue
+        end
+        local hrp  = model:FindFirstChild("HumanoidRootPart")
+        local head = model:FindFirstChild("Head")
+        if not hrp or not head then
+            hideESP(d)
+            if ES.chams then updateChams(model,false) end
+            continue
+        end
+        if t-d.lastCacheTime > 5 then
+            d.cachedIsPlayer=isPlayer_ESP(model); d.cachedIsSleeper=isSleeper_ESP(model); d.lastCacheTime=t
+        end
+        if (ES.teamCheck and IsTeam(model)) or
+           (ES.aiCheck and not d.cachedIsPlayer) or
+           (ES.sleeperCheck and d.cachedIsSleeper) then
+            hideESP(d)
+            if ES.chams then updateChams(model,false) end
+            continue
+        end
+        local dist = (camPos-hrp.Position).Magnitude
+        if dist>ES.renderDistance then
+            hideESP(d)
+            if ES.chams then updateChams(model,false) end
+            continue
+        end
+        local pos,vis = cam:WorldToViewportPoint(hrp.Position)
+        if not vis then
+            hideESP(d)
+            if ES.chams then updateChams(model,true,ES.chamsColor) end
+            continue
+        end
+        local scale = 1/(pos.Z*fovTan*2)*100
+        local w,h = math.floor(45*scale), math.floor(70*scale)
+
+        d.box.Size=Vector2.new(w,h); d.box.Position=Vector2.new(pos.X-w/2,pos.Y-h/2)
+        d.box.Visible=ES.box; d.box.Color=ES.boxColor
+
+        local dtype = d.cachedIsSleeper and "Sleeper" or (d.cachedIsPlayer and "Player" or "Bot")
+
+        if ES.name then
+            d.nameText.Text=dtype; d.nameText.Position=Vector2.new(pos.X,pos.Y-h/2-14)
+            d.nameText.Visible=true; d.nameText.Color=ES.nameColor
+        else d.nameText.Visible=false end
+
+        if ES.weapon then
+            d.weaponText.Text=detectWeapon(model); d.weaponText.Position=Vector2.new(pos.X,pos.Y+h/2+2)
+            d.weaponText.Visible=true; d.weaponText.Color=ES.weapColor
+        else d.weaponText.Visible=false end
+
+        if ES.distance then
+            d.distanceText.Text="["..math.floor(dist).."m]"; d.distanceText.Position=Vector2.new(pos.X,pos.Y+h/2+14)
+            d.distanceText.Visible=true; d.distanceText.Color=ES.distColor
+        else d.distanceText.Visible=false end
+
+        if ES.chams then updateChams(model,true,ES.chamsColor) end
+    end
+end)
+
+workspace.DescendantAdded:Connect(function(obj)
+    if obj:IsA("Model") then
+        task.wait(0.1)
+        if obj:FindFirstChild("HumanoidRootPart") and not boxes[obj] then createESP(obj) end
+    elseif obj.Name=="HandModel" and obj.Parent then resetWeaponCache(obj.Parent) end
+end)
+workspace.DescendantRemoving:Connect(function(obj)
+    if obj:IsA("Model") then
+        local data = boxes[obj]
+        if data then
+            data.box:Remove(); data.nameText:Remove(); data.weaponText:Remove(); data.distanceText:Remove()
+            boxes[obj]=nil
+        end
+        if chamsObjects[obj] then pcall(function() chamsObjects[obj]:Destroy() end); chamsObjects[obj]=nil end
+        resetWeaponCache(obj); plrTypeCache[obj]=nil; sleepCacheESP[obj]=nil
+    elseif obj.Name=="HandModel" and obj.Parent then resetWeaponCache(obj.Parent) end
+end)
+
+task.spawn(function()
+    while true do task.wait(5); for m in pairs(weaponCache) do if m and m.Parent then resetWeaponCache(m) end end end
+end)
+
+for _,m in ipairs(workspace:GetChildren()) do
+    if m:IsA("Model") then
+        task.spawn(function() task.wait(0.1); if m:FindFirstChild("HumanoidRootPart") then createESP(m) end end)
+    end
+end
+
+---------
+ESP:AddToggle("Enable Esp",{Text="Enable Esp",Callback=function(v) ES.enabled=v end})
+ESP:AddSlider("Render Distance",{Text="Render Distance",Default=1000,Min=500,Max=1250,Rounding=1,Compact=false,Callback=function(v) ES.renderDistance=v end})
+ESP:AddToggle("Sleeper Check",{Text="Sleeper Check",Default=false,Callback=function(v) ES.sleeperCheck=v end})
+ESP:AddToggle("AI Check",{Text="AI Check",Default=false,Callback=function(v) ES.aiCheck=v end})
+ESP:AddToggle("Team Check",{Text="Team Check",Default=false,Callback=function(v) ES.teamCheck=v end})
+ESP:AddToggle("Box",{Text="Box",Callback=function(v) ES.box=v end}):AddColorPicker("Box Color",{Default=Color3.fromRGB(61,180,136),Callback=function(v) ES.boxColor=v end})
+ESP:AddToggle("Name",{Text="Name",Callback=function(v) ES.name=v end}):AddColorPicker("Name Color",{Default=Color3.fromRGB(61,180,136),Callback=function(v) ES.nameColor=v end})
+ESP:AddToggle("Distance",{Text="Distance",Callback=function(v) ES.distance=v end}):AddColorPicker("Distance Color",{Default=Color3.fromRGB(61,180,136),Callback=function(v) ES.distColor=v end})
+ESP:AddToggle("Weapon",{Text="Weapon",Callback=function(v) ES.weapon=v end}):AddColorPicker("Weapon Color",{Default=Color3.fromRGB(61,180,136),Callback=function(v) ES.weapColor=v end})
+ESP:AddToggle("Chams",{Text="Chams",Default=false,Callback=function(v)
+    ES.chams=v; if not v then for _,c in pairs(chamsObjects) do c.Enabled=false end end
+end}):AddColorPicker("Chams Color",{Default=Color3.fromRGB(61,180,136),Callback=function(v)
+    ES.chamsColor=v; for _,c in pairs(chamsObjects) do if c.Enabled then c.FillColor=v end end
+end})
+
+--ZONE
+local ZONE = Tabs.VISUAL:AddLeftGroupbox('ZONE VISIBLE')
+
+ZONE:AddToggle('SafeZone',{Text='SafeZone'}):AddColorPicker('SafeZoneColor',{Default=Color3.fromRGB(0,255,0),Title='SafeZone Color',Transparency=0})
+
+local zonePart = workspace.World.Zones.SafeZones:FindFirstChild("SAFEZONE_Town")
+local safeZoneColor = Color3.fromRGB(0,255,0)
+
+Toggles.SafeZone:OnChanged(function(state)
+    if zonePart then
+        if state then
+            zonePart.Transparency=0; zonePart.Material=Enum.Material.ForceField; zonePart.Color=safeZoneColor
+        else
+            zonePart.Transparency=1; zonePart.Material=Enum.Material.Neon
+        end
+    end
+end)
+Options.SafeZoneColor:OnChanged(function(color)
+    safeZoneColor=color
+    if zonePart and Toggles.SafeZone.Value then zonePart.Color=safeZoneColor end
+end)
+
+ZONE:AddToggle('BildZone',{Text='BildZone'}):AddColorPicker('BildZoneColor',{Default=Color3.fromRGB(255,0,0),Title='BildZone Color',Transparency=0})
+
+local noBuildZones = workspace.World.Zones.NoBuildZones
+local bildZoneColor = Options.BildZoneColor.Value
+
+Toggles.BildZone:OnChanged(function(state)
+    for _,p in ipairs(noBuildZones:GetDescendants()) do
+        if p:IsA("BasePart") then
+            if state then p.Transparency=0; p.Material=Enum.Material.ForceField; p.Color=bildZoneColor
+            else p.Transparency=1; p.Material=Enum.Material.Neon end
+        end
+    end
+end)
+Options.BildZoneColor:OnChanged(function(color)
+    bildZoneColor=color
+    if Toggles.BildZone.Value then
+        for _,p in ipairs(noBuildZones:GetDescendants()) do
+            if p:IsA("BasePart") then p.Color=bildZoneColor end
+        end
+    end
+end)
+
+--world
+local World = Tabs.VISUAL:AddLeftGroupbox('WORLD')
+
+local FG = { enabled=false, value=0.5 }
+
+local function applyFakeGamma()
+    local lighting = game:GetService("Lighting")
+    local eff = lighting:FindFirstChild("StimEffect")
+    if not eff then
+        eff = Instance.new("ColorCorrectionEffect")
+        eff.Name="StimEffect"; eff.Parent=lighting
+    end
+    eff.Enabled=FG.enabled; eff.Brightness=FG.value
+    eff.Contrast=1; eff.Saturation=1; eff.TintColor=Color3.fromRGB(255,255,255)
+end
+
+World:AddToggle("FakeGammaToggle",{Text="Fake Gamma",Default=false,Callback=function(v)
+    FG.enabled=v; applyFakeGamma()
+end}):AddKeyPicker("FakeGammaKey",{Default="None",SyncToggleState=true,Mode="Toggle",Text="Fake Gamma Key",
+    Callback=function(v) FG.enabled=v; applyFakeGamma() end})
+World:AddSlider("FakeGammaSlider",{Text="gammaValue",Default=0.5,Min=0.2,Max=0.99,Rounding=2,
+    Callback=function(v) FG.value=v; if FG.enabled then applyFakeGamma() end end})
+
+local XR = { enabled=false, transparency=0.5 }
+local xrayMaterials = {
+    [Enum.Material.Cobblestone]=true,[Enum.Material.WoodPlanks]=true,
+    [Enum.Material.Metal]=true,[Enum.Material.CorrodedMetal]=true,
+    [Enum.Material.Concrete]=true,[Enum.Material.Brick]=true,
+    [Enum.Material.Slate]=true,[Enum.Material.Marble]=true,
+    [Enum.Material.Granite]=true,[Enum.Material.Limestone]=true,
+    [Enum.Material.Sandstone]=true,
+}
+local xrayOriginal = {}
+local xrayParts    = {}
+local xraySet      = {}  
+
+local function isXrayMat(p) return p:IsA("BasePart") and xrayMaterials[p.Material] end
+
+local function addXrayPart(p)
+    if xraySet[p] then return end
+    xraySet[p]=true
+    table.insert(xrayParts,p)
+    xrayOriginal[p]=p.Transparency
+end
+
+local function collectXrayParts()
+    xrayParts={}; xrayOriginal={}; xraySet={}
+    for _,v in ipairs(workspace:GetDescendants()) do
+        if isXrayMat(v) then addXrayPart(v) end
+    end
+end
+
+local function applyXray(state)
+    for _,p in ipairs(xrayParts) do
+        if p and p.Parent then
+            p.Transparency = state and XR.transparency or (xrayOriginal[p] or 0)
+        end
+    end
+end
+
+collectXrayParts()
+
+
+local xrayPendingAdd = {}
+local xrayPendingDel = {}
+local xrayBatchRunning = false
+
+local function startXrayBatch()
+    if xrayBatchRunning then return end
+    xrayBatchRunning = true
+    task.spawn(function()
+        while #xrayPendingAdd > 0 or #xrayPendingDel > 0 do
+            task.wait(0.1)
+            
+            for _,p in ipairs(xrayPendingDel) do
+                if xraySet[p] then
+                    xraySet[p]=nil; xrayOriginal[p]=nil
+                    for i=#xrayParts,1,-1 do
+                        if xrayParts[i]==p then table.remove(xrayParts,i); break end
+                    end
+                end
+            end
+            xrayPendingDel={}
+            
+            local batch = xrayPendingAdd
+            xrayPendingAdd = {}
+            for _,p in ipairs(batch) do
+                if p and p.Parent and not xraySet[p] then
+                    addXrayPart(p)
+                    if XR.enabled then p.Transparency=XR.transparency end
+                end
+            end
+        end
+        xrayBatchRunning=false
+    end)
+end
+
+workspace.DescendantAdded:Connect(function(p)
+    if isXrayMat(p) then
+        table.insert(xrayPendingAdd, p)
+        startXrayBatch()
+    end
+end)
+workspace.DescendantRemoving:Connect(function(p)
+    if isXrayMat(p) then
+        table.insert(xrayPendingDel, p)
+        startXrayBatch()
+    end
+end)
+
+World:AddToggle('XrayToggle',{Text='XRAY',Default=false,Callback=function(v)
+    XR.enabled=v; applyXray(v)
+end}):AddKeyPicker("XrayKey",{Default="None",SyncToggleState=true,Mode="Toggle",Text="Xray Key",
+    Callback=function(v) XR.enabled=v; applyXray(v) end})
+World:AddSlider('XrayTransparency',{Text='XRAY Transparency',Min=0,Max=1,Default=0.5,Rounding=2,
+    Callback=function(v) XR.transparency=v; if XR.enabled then applyXray(true) end end})
+
+--other
+--trasers
+local otthner = Tabs.VISUAL:AddRightGroupbox('OTHER')
+
+local BT = {
+    enabled=false, color=Color3.fromRGB(61,180,136),
+    thickness=0.1, length=5, lifetime=1.5,
+}
+local projectileTrails = {}
+local bulletNames = {"Bullet","BlueBullet","Projectile","Rocket","Missile","Grenade"}
+
+local function isLocalArrow(obj)
+    local ok,res = pcall(function()
+        local fps = workspace:FindFirstChild("Const") and workspace.Const:FindFirstChild("Ignore") and workspace.Const.Ignore:FindFirstChild("FPSArms")
+        if fps then
+            local hm = fps:FindFirstChild("HandModel")
+            return hm and hm:FindFirstChild("Arrow")==obj
+        end
+        return false
+    end)
+    return ok and res
+end
+
+local function createTrail(proj)
+    if projectileTrails[proj] then return end
+    if proj.Name=="Arrow" and isLocalArrow(proj) then return end
+    local trailData = {points={}}
+    trailData.connection = RunService.RenderStepped:Connect(function()
+        if not BT.enabled then
+            trailData.connection:Disconnect(); projectileTrails[proj]=nil; return
+        end
+        if not proj or not proj.Parent then
+            trailData.connection:Disconnect(); projectileTrails[proj]=nil; return
+        end
+        if proj.Name=="Arrow" and isLocalArrow(proj) then
+            trailData.connection:Disconnect(); projectileTrails[proj]=nil; return
+        end
+        local pp = proj.Position or proj.CFrame.Position
+        table.insert(trailData.points,1,pp)
+        if #trailData.points>BT.length then table.remove(trailData.points) end
+        for i=1,#trailData.points-1 do
+            local p1,p2 = trailData.points[i], trailData.points[i+1]
+            local d = (p1-p2).Magnitude
+            if d>0.5 then
+                local tp = Instance.new("Part")
+                tp.Anchored=true; tp.CanCollide=false; tp.CanQuery=false; tp.CanTouch=false
+                tp.Size=Vector3.new(BT.thickness,BT.thickness,d)
+                tp.CFrame=CFrame.new(p1,p2)*CFrame.new(0,0,-d/2)
+                tp.Color=BT.color; tp.Material=Enum.Material.ForceField; tp.Parent=workspace
+                Debris:AddItem(tp,BT.lifetime)
+            end
+        end
+    end)
+    projectileTrails[proj]=trailData
+end
+
+workspace.DescendantAdded:Connect(function(obj)
+    if obj:IsDescendantOf(ReplicatedStorage) then return end
+    task.wait()
+    if not BT.enabled then return end
+    for _,n in ipairs(bulletNames) do
+        if obj.Name==n then createTrail(obj); return end
+    end
+    if obj.Name=="Arrow" and not isLocalArrow(obj) then createTrail(obj) end
+end)
+
+local trailToggle = otthner:AddToggle('BulletTrailToggle',{Text='Enable Bullet Trails',Default=false,
+    Callback=function(v)
+        BT.enabled=v
+        if not v then
+            for _,data in pairs(projectileTrails) do
+                if data.connection then data.connection:Disconnect() end
+            end
+            projectileTrails={}
+        end
+    end})
+trailToggle:AddColorPicker('BulletTrailColor',{Title='Trail Color',Default=Color3.fromRGB(61,180,136),Callback=function(v) BT.color=v end})
+otthner:AddSlider('BulletTrailLifetime',{Text='Lifetime',Default=1.5,Min=0.5,Max=5,Rounding=1,Suffix='s',Callback=function(v) BT.lifetime=v end})
+otthner:AddSlider('BulletTrailLength',{Text='Length',Default=5,Min=1,Max=10,Rounding=1,Callback=function(v) BT.length=v end})
+otthner:AddSlider('BulletTrailThickness',{Text='Thickness',Default=0.1,Min=0.1,Max=1,Rounding=2,Callback=function(v) BT.thickness=v end})
+
+-- Arm Chams
+local AC = { enabled=false, color=Color3.fromRGB(61,180,136) }
+local armParts, origArmProps = {}, {}
+
+local armPaths = {
+    {"Const","Ignore","FPSArms","RightHand"},
+    {"Const","Ignore","FPSArms","RightLowerArm"},
+    {"Const","Ignore","FPSArms","LeftLowerArm"},
+    {"Const","Ignore","FPSArms","LeftHand"},
+    {"Const","Ignore","FPSArms","Fake","c_RightLowerArm"},
+    {"Const","Ignore","FPSArms","Fake","c_LeftLowerArm"},
+}
+
+local function findPath_AC(root, paths)
+    local cur=root
+    for _,p in ipairs(paths) do cur=cur:FindFirstChild(p); if not cur then return nil end end
+    return cur
+end
+
+local function saveArmProps()
+    for _,paths in ipairs(armPaths) do
+        local p = findPath_AC(workspace,paths)
+        if p and p:IsA("BasePart") and not origArmProps[p] then
+            origArmProps[p]={Material=p.Material,Color=p.Color}
+        end
+    end
+end
+
+local function updateArmParts()
+    armParts={}
+    for _,paths in ipairs(armPaths) do
+        local p = findPath_AC(workspace,paths)
+        if p and p:IsA("BasePart") then table.insert(armParts,p) end
+    end
+end
+
+local function applyArmChams()
+    if not AC.enabled then
+        for part,props in pairs(origArmProps) do
+            if part and part.Parent then part.Material=props.Material; part.Color=props.Color end
+        end
+        return
+    end
+    for _,p in ipairs(armParts) do
+        if p and p.Parent then p.Material=Enum.Material.ForceField; p.Color=AC.color end
+    end
+end
+
+saveArmProps(); updateArmParts()
+
+me.CharacterAdded:Connect(function()
+    task.wait(1); saveArmProps(); updateArmParts(); if AC.enabled then applyArmChams() end
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(1)
+        if AC.enabled then updateArmParts(); applyArmChams() end
+    end
+end)
+
+local armToggle = otthner:AddToggle('ArmChamsToggle',{Text='Arm Charms',Default=false,
+    Callback=function(v)
+        AC.enabled=v
+        if v then updateArmParts(); applyArmChams()
+        else applyArmChams() end
+    end})
+armToggle:AddColorPicker('ArmChamsColor',{Title='Arm Color',Default=Color3.fromRGB(61,180,136),
+    Callback=function(v) AC.color=v; if AC.enabled then applyArmChams() end end})
+
+--oreesp
+local TEXTORE = Tabs.VISUAL:AddRightGroupbox('ORE ESP')
+
+local oreESP = {}
+local oreOn  = { Stone=false, Iron=false, Nitrate=false }
+local oreSet = { Enabled=false, ShowDistance=false, MaxDistance=500, TextSize=12 }
+local oreColors = {
+    Stone   = Color3.fromRGB(120,120,120),
+    Iron    = Color3.fromRGB(255,215,0),
+    Nitrate = Color3.fromRGB(200,255,200),
+}
+
+local oreCache      = setmetatable({}, {__mode="k"})
+local colorCacheOre = {}
+local function getCachedColor(c)
+    local k=string.format("%.3f%.3f%.3f",c.R,c.G,c.B)
+    colorCacheOre[k]=colorCacheOre[k] or c; return colorCacheOre[k]
+end
+
+local oreUpdateTimer, oreScanTimer = 0, 0
+local ORE_RENDER = 0.05
+local ORE_SCAN   = 1
+
+TEXTORE:AddToggle('OreESP_Master',{Text='Enable Ore ESP',Default=false,Callback=function(v)
+    oreSet.Enabled=v
+    if not v then for _,d in pairs(oreESP) do if d.Text then d.Text.Visible=false end end end
+end})
+TEXTORE:AddToggle('OreESP_Stone',{Text='Stone ESP',Default=false,Callback=function(v) oreOn.Stone=v end}):AddColorPicker('OreStoneColor',{Default=oreColors.Stone,Title='Stone Color',Callback=function(c)
+    oreColors.Stone=getCachedColor(c)
+    for _,d in pairs(oreESP) do if d.OreType=="Stone" and d.Text then d.Text.Color=oreColors.Stone end end
+end})
+TEXTORE:AddToggle('OreESP_Iron',{Text='Iron ESP',Default=false,Callback=function(v) oreOn.Iron=v end}):AddColorPicker('OreIronColor',{Default=oreColors.Iron,Title='Iron Color',Callback=function(c)
+    oreColors.Iron=getCachedColor(c)
+    for _,d in pairs(oreESP) do if d.OreType=="Iron" and d.Text then d.Text.Color=oreColors.Iron end end
+end})
+TEXTORE:AddToggle('OreESP_Nitrate',{Text='Nitrate ESP',Default=false,Callback=function(v) oreOn.Nitrate=v end}):AddColorPicker('OreNitrateColor',{Default=oreColors.Nitrate,Title='Nitrate Color',Callback=function(c)
+    oreColors.Nitrate=getCachedColor(c)
+    for _,d in pairs(oreESP) do if d.OreType=="Nitrate" and d.Text then d.Text.Color=oreColors.Nitrate end end
+end})
+TEXTORE:AddToggle('OreESP_Distance',{Text='Show Distance',Default=false,Callback=function(v) oreSet.ShowDistance=v end})
+TEXTORE:AddSlider('OreESP_MaxDistance',{Text='Render Distance',Default=500,Min=250,Max=1000,Rounding=0,Callback=function(v) oreSet.MaxDistance=v end})
+TEXTORE:AddSlider('OreESP_TextSize',{Text='Text Size',Default=12,Min=10,Max=15,Rounding=0,Callback=function(v)
+    oreSet.TextSize=v; for _,d in pairs(oreESP) do if d.Text then d.Text.Size=v end end
+end})
+
+local STONE_C = getCachedColor(Color3.fromRGB(72,72,72))
+local IRON_C1 = getCachedColor(Color3.fromRGB(199,172,120))
+local NITRATE_C = getCachedColor(Color3.fromRGB(248,248,248))
+
+local function detectOre(model)
+    if oreCache[model] then return oreCache[model].type, oreCache[model].part end
+    local fp = model:FindFirstChildOfClass("MeshPart")
+    if not fp then oreCache[model]={type=nil,part=nil}; return nil end
+    local parts={fp}
+    for _,c in ipairs(model:GetChildren()) do
+        if c:IsA("MeshPart") and c~=fp then table.insert(parts,c) end
+        if #parts>2 then break end
+    end
+    local t,p
+    if #parts==1 and fp.Color==STONE_C then t,p="Stone",fp
+    elseif #parts==2 then
+        local c1,c2=parts[1].Color,parts[2].Color
+        if (c1==STONE_C and c2==IRON_C1) or (c2==STONE_C and c1==IRON_C1) then t,p="Iron",parts[1]
+        elseif (c1==NITRATE_C and c2==STONE_C) or (c2==NITRATE_C and c1==STONE_C) then t,p="Nitrate",parts[1] end
+    end
+    oreCache[model]={type=t,part=p}; return t,p
+end
+
+local function addOre(m,ot,op)
+    if oreESP[m] then return end
+    local tx=Drawing.new("Text"); tx.Text=ot; tx.Size=oreSet.TextSize; tx.Center=true
+    tx.Outline=true; tx.OutlineColor=Color3.new(0,0,0); tx.Color=oreColors[ot]; tx.Visible=false
+    oreESP[m]={Text=tx,OreType=ot,Part=op}
+end
+local function removeOre(m)
+    local d=oreESP[m]; if d then if d.Text then d.Text:Remove() end; oreESP[m]=nil end; oreCache[m]=nil
+end
+local function scanOres()
+    if not oreSet.Enabled then return end
+    for _,m in ipairs(workspace:GetChildren()) do
+        if m:IsA("Model") and not oreESP[m] then
+            local ot,op=detectOre(m)
+            if ot and oreOn[ot] then addOre(m,ot,op) end
+        end
+    end
+end
+task.spawn(scanOres)
+workspace.ChildAdded:Connect(function(m)
+    if m:IsA("Model") and oreSet.Enabled then task.wait(); local ot,op=detectOre(m); if ot and oreOn[ot] then addOre(m,ot,op) end end
+end)
+workspace.ChildRemoved:Connect(removeOre)
+
+task.spawn(function()
+    while true do
+        task.wait(1)
+        if oreSet.Enabled then scanOres() end
+    end
+end)
+
+RunService.RenderStepped:Connect(function(dt)
+    oreUpdateTimer=oreUpdateTimer+dt
+    if oreUpdateTimer<ORE_RENDER then return end; oreUpdateTimer=0
+    if not oreSet.Enabled then
+        for _,d in pairs(oreESP) do if d.Text then d.Text.Visible=false end end; return
+    end
+    local cp=cam.CFrame.Position; local md=oreSet.MaxDistance; local sd=oreSet.ShowDistance
+    for m,d in pairs(oreESP) do
+        local p=d.Part
+        if p and p.Parent and oreOn[d.OreType] then
+            local dist=(cp-p.Position).Magnitude
+            if dist<=md then
+                local sp,on=cam:WorldToViewportPoint(p.Position)
+                if on then
+                    d.Text.Text=sd and string.format("%s | %.0fm",d.OreType,dist) or d.OreType
+                    d.Text.Position=Vector2.new(sp.X,sp.Y); d.Text.Visible=true
+                else d.Text.Visible=false end
+            else d.Text.Visible=false end
+        else removeOre(m) end
+    end
+end)
+
+--vehicle
+local TEXTCAR = Tabs.VISUAL:AddRightGroupbox('VEHICLE ESP')
+
+local vehicleESP = {}
+local vehOn  = { ATV=false, Boat=false, Helicopter=false, Trolly=false }
+local vehSet = { Enabled=false, ShowDistance=false, MaxDistance=1000, TextSize=12 }
+local vehColors = {
+    ATV=getCachedColor(Color3.fromRGB(255,0,0)), Boat=getCachedColor(Color3.fromRGB(0,0,255)),
+    Helicopter=getCachedColor(Color3.fromRGB(0,255,0)), Trolly=getCachedColor(Color3.fromRGB(255,255,0)),
+}
+
+local vehiclesFolder = ReplicatedStorage:FindFirstChild("Shared") and
+                       ReplicatedStorage.Shared:FindFirstChild("entities") and
+                       ReplicatedStorage.Shared.entities:FindFirstChild("vehicles")
+local vehBlueprints = {}
+if vehiclesFolder then
+    for _,n in ipairs({"ATV","Boat","Helicopter","Trolly"}) do
+        local f=vehiclesFolder:FindFirstChild(n)
+        if f then vehBlueprints[n]=f:FindFirstChild("Model") end
+    end
+end
+
+local vehCache = setmetatable({}, {__mode="k"})
+
+local function hasAllParts(model,bp)
+    if not bp then return false end
+    for _,c in ipairs(bp:GetChildren()) do if not model:FindFirstChild(c.Name) then return false end end
+    return true
+end
+local function detectVehicle(model)
+    if vehCache[model] then return vehCache[model] end
+    for vt,bp in pairs(vehBlueprints) do
+        if bp and hasAllParts(model,bp) then vehCache[model]=vt; return vt end
+    end
+end
+local function addVehicle(m,vt)
+    if vehicleESP[m] then return end
+    local tx=Drawing.new("Text"); tx.Text=vt; tx.Size=vehSet.TextSize; tx.Center=true
+    tx.Outline=true; tx.OutlineColor=Color3.new(0,0,0); tx.Color=vehColors[vt]; tx.Visible=false
+    vehicleESP[m]={Text=tx,VehicleType=vt,PrimaryPart=m.PrimaryPart}
+end
+local function removeVehicle(m)
+    local d=vehicleESP[m]; if d then if d.Text then d.Text:Remove() end; vehicleESP[m]=nil end; vehCache[m]=nil
+end
+local function scanVehicles()
+    if not vehSet.Enabled then return end
+    for _,m in ipairs(workspace:GetChildren()) do
+        if m:IsA("Model") and not vehicleESP[m] and m.PrimaryPart then
+            local vt=detectVehicle(m); if vt and vehOn[vt] then addVehicle(m,vt) end
+        end
+    end
+end
+task.spawn(scanVehicles)
+workspace.ChildAdded:Connect(function(m)
+    if m:IsA("Model") and vehSet.Enabled then task.wait(); local vt=detectVehicle(m); if vt and vehOn[vt] then addVehicle(m,vt) end end
+end)
+workspace.ChildRemoved:Connect(removeVehicle)
+
+task.spawn(function()
+    while true do
+        task.wait(1)
+        if vehSet.Enabled then scanVehicles() end
+    end
+end)
+
+local vehRenderTimer = 0
+local VEH_RENDER = 0.05
+RunService.RenderStepped:Connect(function(dt)
+    vehRenderTimer=vehRenderTimer+dt
+    if vehRenderTimer<VEH_RENDER then return end; vehRenderTimer=0
+    if not vehSet.Enabled then
+        for _,d in pairs(vehicleESP) do if d.Text then d.Text.Visible=false end end; return
+    end
+    local cp=cam.CFrame.Position; local md=vehSet.MaxDistance; local sd=vehSet.ShowDistance
+    for m,d in pairs(vehicleESP) do
+        if m and m.Parent and m.PrimaryPart and vehOn[d.VehicleType] then
+            local p=m.PrimaryPart; local dist=(cp-p.Position).Magnitude
+            if dist<=md then
+                local sp,on=cam:WorldToViewportPoint(p.Position)
+                if on then
+                    d.Text.Text=sd and string.format("%s | %.0fm",d.VehicleType,dist) or d.VehicleType
+                    d.Text.Position=Vector2.new(sp.X,sp.Y); d.Text.Visible=true
+                else d.Text.Visible=false end
+            else d.Text.Visible=false end
+        else removeVehicle(m) end
+    end
+end)
+
+--------
+TEXTCAR:AddToggle('VehicleESP_Master',{Text='Enable Vehicle ESP',Default=false,Callback=function(v)
+    vehSet.Enabled=v; if not v then for _,d in pairs(vehicleESP) do if d.Text then d.Text.Visible=false end end end
+end})
+for _,info in ipairs({{"ATV","VehicleESP_ATV","VehicleATVColor"},{"Boat","VehicleESP_Boat","VehicleBoatColor"},
+                       {"Helicopter","VehicleESP_Helicopter","VehicleHelicopterColor"},{"Trolly","VehicleESP_Trolly","VehicleTrollyColor"}}) do
+    local vt,tid,cid = info[1],info[2],info[3]
+    TEXTCAR:AddToggle(tid,{Text=vt..' ESP',Default=false,Callback=function(v) vehOn[vt]=v end}):AddColorPicker(cid,{Default=vehColors[vt],Title=vt..' Color',Callback=function(c)
+        vehColors[vt]=getCachedColor(c)
+        for _,d in pairs(vehicleESP) do if d.VehicleType==vt and d.Text then d.Text.Color=vehColors[vt] end end
+    end})
+end
+TEXTCAR:AddToggle('VehicleESP_Distance',{Text='Show Distance',Default=false,Callback=function(v) vehSet.ShowDistance=v end})
+TEXTCAR:AddSlider('VehicleESP_MaxDistance',{Text='Render Distance',Default=1000,Min=250,Max=1500,Rounding=0,Callback=function(v) vehSet.MaxDistance=v end})
+TEXTCAR:AddSlider('VehicleESP_TextSize',{Text='Text Size',Default=12,Min=10,Max=15,Rounding=0,Callback=function(v)
+    vehSet.TextSize=v; for _,d in pairs(vehicleESP) do if d.Text then d.Text.Size=v end end
+end})
+
+--other wh
+local Other1 = Tabs.VISUAL:AddRightGroupbox('OTHER')
+
+local itemESP   = {}
+local corpseESP = {}
+local IE = { Enabled=false, Show=false, MaxDistance=500, TextSize=12, ItemEnabled=false }
+local CE = { Enabled=false, Show=true,  MaxDistance=500, TextSize=12, CorpseEnabled=false }
+local itemColor   = getCachedColor(Color3.fromRGB(255,255,0))
+local corpseColor = getCachedColor(Color3.fromRGB(255,0,0))
+
+local itemCacheIC   = setmetatable({}, {__mode="k"})
+local corpseCacheIC = setmetatable({}, {__mode="k"})
+
+local function isItem(m)
+    if itemCacheIC[m]~=nil then return itemCacheIC[m] end
+    local v=m:FindFirstChild("Union") and m:FindFirstChild("Display") and m:FindFirstChild("Part")
+    itemCacheIC[m]=v; return v
+end
+local function isCorpse(m)
+    if corpseCacheIC[m]~=nil then return corpseCacheIC[m] end
+    local parts={}
+    for _,c in ipairs(m:GetChildren()) do
+        if c:IsA("BasePart") then table.insert(parts,c) end
+        if #parts>2 then break end
+    end
+    if #parts~=2 then corpseCacheIC[m]=false; return false end
+    local v=(parts[1].Material==Enum.Material.Fabric and parts[2].Material==Enum.Material.Metal) or
+             (parts[1].Material==Enum.Material.Metal  and parts[2].Material==Enum.Material.Fabric)
+    corpseCacheIC[m]=v; return v
+end
+
+local function addItem(m)
+    if itemESP[m] then return end
+    local tx=Drawing.new("Text"); tx.Text="Item"; tx.Size=IE.TextSize; tx.Center=true
+    tx.Outline=true; tx.OutlineColor=Color3.new(0,0,0); tx.Color=itemColor; tx.Visible=false
+    itemESP[m]={Text=tx, Part=m:FindFirstChild("Union") or m:FindFirstChild("Display") or m:FindFirstChild("Part")}
+end
+local function addCorpse(m)
+    if corpseESP[m] then return end
+    local tx=Drawing.new("Text"); tx.Text="Corpse"; tx.Size=CE.TextSize; tx.Center=true
+    tx.Outline=true; tx.OutlineColor=Color3.new(0,0,0); tx.Color=corpseColor; tx.Visible=false
+    corpseESP[m]={Text=tx, Part=m.PrimaryPart or m:FindFirstChildWhichIsA("BasePart")}
+end
+local function removeItem(m)
+    local d=itemESP[m]; if d then if d.Text then d.Text:Remove() end; itemESP[m]=nil end; itemCacheIC[m]=nil
+end
+local function removeCorpse(m)
+    local d=corpseESP[m]; if d then if d.Text then d.Text:Remove() end; corpseESP[m]=nil end; corpseCacheIC[m]=nil
+end
+
+local function scanItems()
+    if not IE.Enabled then return end
+    for _,m in ipairs(workspace:GetChildren()) do
+        if m:IsA("Model") and not itemESP[m] and IE.ItemEnabled and isItem(m) then addItem(m) end
+    end
+end
+local function scanCorpses()
+    if not CE.Enabled then return end
+    for _,m in ipairs(workspace:GetChildren()) do
+        if m:IsA("Model") and not corpseESP[m] and CE.CorpseEnabled and isCorpse(m) then addCorpse(m) end
+    end
+end
+
+task.spawn(scanItems); task.spawn(scanCorpses)
+
+workspace.ChildAdded:Connect(function(m)
+    if m:IsA("Model") then task.wait()
+        if IE.Enabled and IE.ItemEnabled and isItem(m) then addItem(m) end
+        if CE.Enabled and CE.CorpseEnabled and isCorpse(m) then addCorpse(m) end
+    end
+end)
+workspace.ChildRemoved:Connect(function(m) removeItem(m); removeCorpse(m) end)
+
+
+task.spawn(function()
+    while true do
+        task.wait(1)
+        if IE.Enabled then scanItems() end
+        if CE.Enabled then scanCorpses() end
+    end
+end)
+
+local icRenderTimer = 0
+local IC_RENDER = 0.05
+RunService.RenderStepped:Connect(function(dt)
+    icRenderTimer=icRenderTimer+dt
+    if icRenderTimer<IC_RENDER then return end; icRenderTimer=0
+
+    local cp=cam.CFrame.Position
+
+    if IE.Enabled then
+        for m,d in pairs(itemESP) do
+            local p=d.Part
+            if p and p.Parent and IE.ItemEnabled then
+                local dist=(cp-p.Position).Magnitude
+                if dist<=IE.MaxDistance then
+                    local sp,on=cam:WorldToViewportPoint(p.Position)
+                    if on then
+                        d.Text.Text=IE.Show and string.format("Item | %.0fm",dist) or "Item"
+                        d.Text.Position=Vector2.new(sp.X,sp.Y-20); d.Text.Visible=true
+                    else d.Text.Visible=false end
+                else d.Text.Visible=false end
+            else removeItem(m) end
+        end
+    else for _,d in pairs(itemESP) do if d.Text then d.Text.Visible=false end end end
+
+    if CE.Enabled then
+        for m,d in pairs(corpseESP) do
+            local p=d.Part
+            if p and p.Parent and CE.CorpseEnabled then
+                local dist=(cp-p.Position).Magnitude
+                if dist<=CE.MaxDistance then
+                    local sp,on=cam:WorldToViewportPoint(p.Position)
+                    if on then
+                        d.Text.Text=CE.Show and string.format("Corpse | %.0fm",dist) or "Corpse"
+                        d.Text.Position=Vector2.new(sp.X,sp.Y-20); d.Text.Visible=true
+                    else d.Text.Visible=false end
+                else d.Text.Visible=false end
+            else removeCorpse(m) end
+        end
+    else for _,d in pairs(corpseESP) do if d.Text then d.Text.Visible=false end end end
+end)
+
+-----------
+Other1:AddToggle('ItemESP_Master',{Text='Enable Item ESP',Default=false,Callback=function(v)
+    IE.Enabled=v; if not v then for _,d in pairs(itemESP) do if d.Text then d.Text.Visible=false end end end
+end})
+Other1:AddToggle('ItemESP_Items',{Text='Item ESP',Default=false,Callback=function(v) IE.ItemEnabled=v end}):AddColorPicker('ItemESP_Color',{Default=itemColor,Title='Item Color',Callback=function(c)
+    itemColor=getCachedColor(c); for _,d in pairs(itemESP) do if d.Text then d.Text.Color=itemColor end end
+end})
+Other1:AddToggle('ItemESP_Distance',{Text='Show Distance',Default=false,Callback=function(v) IE.Show=v end})
+Other1:AddSlider('ItemESP_MaxDistance',{Text='Render Distance',Default=500,Min=250,Max=1000,Rounding=0,Callback=function(v) IE.MaxDistance=v end})
+Other1:AddToggle('CorpseESP_Master',{Text='Enable Corpse ESP',Default=false,Callback=function(v)
+    CE.Enabled=v; if not v then for _,d in pairs(corpseESP) do if d.Text then d.Text.Visible=false end end end
+end})
+Other1:AddToggle('CorpseESP_Corpses',{Text='Corpse ESP',Default=false,Callback=function(v) CE.CorpseEnabled=v end}):AddColorPicker('CorpseESP_Color',{Default=corpseColor,Title='Corpse Color',Callback=function(c)
+    corpseColor=getCachedColor(c); for _,d in pairs(corpseESP) do if d.Text then d.Text.Color=corpseColor end end
+end})
+Other1:AddToggle('CorpseESP_Distance',{Text='Show Distance',Default=false,Callback=function(v) CE.Show=v end})
+Other1:AddSlider('CorpseESP_MaxDistance',{Text='Render Distance',Default=500,Min=250,Max=1000,Rounding=0,Callback=function(v) CE.MaxDistance=v end})
+Other1:AddSlider('CorpseESP_TextSize',{Text='Text Size',Default=12,Min=10,Max=15,Rounding=0,Callback=function(v)
+    CE.TextSize=v; for _,d in pairs(corpseESP) do if d.Text then d.Text.Size=v end end
+end})
+
+---plr set
+local PLRSET = Tabs.PLAYER:AddRightGroupbox('PLAYER SETTINGS')
+
+local LN = { enabled=false, strength=5 }
+
+local character   = workspace.Const and workspace.Const.Ignore and workspace.Const.Ignore.LocalCharacter
+local top         = character and character:FindFirstChild("Top")
+local neck        = top and top:FindFirstChild("Prism1")
+local origNeckCF  = neck and neck.CFrame
+
+local function setLongNeck(state)
+    if not neck or not origNeckCF then return end
+    neck.CFrame = state and origNeckCF-Vector3.new(0,LN.strength,0) or origNeckCF
+end
+
+local lnToggle = PLRSET:AddToggle("LongNeckToggle",{Text="Enable Long Neck",Default=false,
+    Callback=function(v) LN.enabled=v; setLongNeck(v) end})
+lnToggle:AddKeyPicker("LongNeckKeyPicker",{Text="LongNeck",Default="None",Mode="Toggle",
+    Callback=function() LN.enabled=not LN.enabled; setLongNeck(LN.enabled); lnToggle:SetValue(LN.enabled) end})
+PLRSET:AddSlider("LongNeckStrength",{Text="Neck height Y",Default=5,Min=3,Max=6.5,Rounding=1,Compact=false,
+    Callback=function(v) LN.strength=v; if LN.enabled then setLongNeck(true) end end})
+
+--exploit
+local Exploit = Tabs.PLAYER:AddLeftGroupbox('CAMERA SETTINGS')
+
+local CAM = { enabled=false, back=15, up=3 }
+local hrpCam = workspace.Const.Ignore.FPSArms:FindFirstChild("HumanoidRootPart")
+
+Exploit:AddToggle('CamToggle',{Text='3-third',Default=false,Callback=function(v) CAM.enabled=v end}):AddKeyPicker('CamKey',{Default='None',SyncToggleState=true,Mode='Toggle',Text='3-third Key',Callback=function(v) CAM.enabled=v end})
+Exploit:AddSlider('CamUp',{Text='Camera Up',Default=3,Min=1,Max=15,Rounding=1,Callback=function(v) CAM.up=v end})
+Exploit:AddSlider('CamBack',{Text='Camera Back',Default=15,Min=2.5,Max=30,Rounding=1,Callback=function(v) CAM.back=v end})
+
+RunService.RenderStepped:Connect(function()
+    if CAM.enabled and hrpCam then
+        local p=hrpCam.Position - hrpCam.CFrame.LookVector*CAM.back + Vector3.new(0,CAM.up,0)
+        cam.CFrame=CFrame.new(p, p+hrpCam.CFrame.LookVector)
+    end
+end)
+
+local FC = { enabled=false, speed=150, pos=cam.CFrame.Position }
+
+Exploit:AddToggle('FreecamToggle',{Text='Freecam',Default=false,Callback=function(v)
+    FC.enabled=v; if v then FC.pos=cam.CFrame.Position end
+end}):AddKeyPicker('FreecamKey',{Default='None',SyncToggleState=true,Mode='Toggle',Text='Freecam key',
+    Callback=function(v) FC.enabled=v; if v then FC.pos=cam.CFrame.Position end end})
+Exploit:AddSlider('FreecamSpeed',{Text='Freecam Speed',Default=150,Min=10,Max=250,Rounding=0,Callback=function(v) FC.speed=v end})
+
+RunService.RenderStepped:Connect(function(dt)
+    if not FC.enabled then return end
+    local move=Vector3.zero
+    if UserInputService:IsKeyDown(Enum.KeyCode.Up)    then move+=cam.CFrame.LookVector  end
+    if UserInputService:IsKeyDown(Enum.KeyCode.Down)  then move-=cam.CFrame.LookVector  end
+    if UserInputService:IsKeyDown(Enum.KeyCode.Left)  then move-=cam.CFrame.RightVector end
+    if UserInputService:IsKeyDown(Enum.KeyCode.Right) then move+=cam.CFrame.RightVector end
+    if move.Magnitude>0 then FC.pos+=move.Unit*FC.speed*dt end
+    cam.CFrame=CFrame.new(FC.pos, FC.pos+cam.CFrame.LookVector)
+end)
+
+Exploit:AddLabel('Move  ↑ ← ↓ →  ')
+
+--settings
+local MenuGroup = Tabs['UI Settings']:AddLeftGroupbox('Menu')
+MenuGroup:AddButton('Unload', function() Library:Unload() end)
+MenuGroup:AddLabel('Menu bind'):AddKeyPicker('MenuKeybind',{Default='RightShift',NoUI=true,Text='Menu keybind'})
+
+Library:SetWatermarkVisibility(true)
+Library.KeybindFrame.Visible=true
+
+local watermarkEnabled = true
+MenuGroup:AddToggle('WatermarkToggle',{Text='Watermark',Default=true,Callback=function(v)
+    watermarkEnabled=v; Library:SetWatermarkVisibility(v) end})
+MenuGroup:AddToggle('KeybindFrameToggle',{Text='Keybind Frame',Default=true,Callback=function(v)
+    Library.KeybindFrame.Visible=v end})
+
+Toggles.WatermarkToggle:OnChanged(function() watermarkEnabled=Toggles.WatermarkToggle.Value; Library:SetWatermarkVisibility(watermarkEnabled) end)
+Toggles.KeybindFrameToggle:OnChanged(function() Library.KeybindFrame.Visible=Toggles.KeybindFrameToggle.Value end)
+
+Library.ToggleKeybind=Options.MenuKeybind
+
+local fps, frames, lastTime = 0, 0, tick()
+RunService.RenderStepped:Connect(function()
+    frames+=1
+    local now=tick()
+    if now-lastTime>=1 then fps=frames; frames=0; lastTime=now end
+end)
+
+task.spawn(function()
+    while true do
+        if watermarkEnabled then
+            local ping=0
+            local net=Stats:FindFirstChild("Network")
+            if net then
+                local sv=net:FindFirstChild("ServerStatsItem")
+                if sv then local dp=sv:FindFirstChild("Data Ping"); if dp then ping=math.floor(dp:GetValue()) end end
+            end
+            Library:SetWatermark(string.format("AV∅X | TridentSuvivalV5 | %s | %dfps | %dms | %s", me.Name, fps, ping, os.date("%H:%M")))
+        end
+        task.wait(1)
+    end
+end)
+
+ThemeManager:SetLibrary(Library)
+SaveManager:SetLibrary(Library)
+SaveManager:IgnoreThemeSettings()
+SaveManager:SetIgnoreIndexes({'MenuKeybind'})
+ThemeManager:SetFolder('AV00XPAID')
+SaveManager:SetFolder('AV00XPAID')
+SaveManager:BuildConfigSection(Tabs['UI Settings'])
+ThemeManager:ApplyToTab(Tabs['UI Settings'])
+SaveManager:LoadAutoloadConfig()
+ThemeManager:ApplyTheme('Mint')
